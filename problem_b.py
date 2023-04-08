@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.columns import Columns
 from typing import Dict, List, Optional, Tuple, Type
-from typer import Typer, Argument
+from typer import Typer, Argument, Option
 
 
 class Tile(ABC):
@@ -39,6 +39,8 @@ class Tile(ABC):
 
     @abstractmethod
     def simulate(self, board: Board) -> Tile:
+        # TODO: Decouple this, the tile should not depend on the board or be
+        #       responsible for incrementing the score
         pass
 
 
@@ -95,6 +97,9 @@ class Caterpiller(Tile):
             board.score -= 1
             return self
 
+        # TODO: Too coupled
+        board._create_butterfly(self.x, self.y)
+
         return Field(self.x, self.y)
 
 
@@ -107,6 +112,10 @@ class Butterfly(Tile):
         return f"[cyan]{self.value}[/cyan]"
 
     def simulate(self, board: Board) -> Tile:
+        """
+        Butterflies are a special case because they move after the simulation
+        is
+        """
         return self
 
 
@@ -125,10 +134,17 @@ class Board:
     width: int
     board: List[List[Tile]]
 
+    # Internal properties for use within the class only
     _simulation_limit: int
+    _with_butterflies: bool
+    _butterfly_chance: float
+    _butterfly_mortality: float
+    _butterflies: Dict[Tuple[int, int], Butterfly]
 
     def __init__(
-        self, board: List[List[Tile]], with_butterflies: bool = False
+        self,
+        board: List[List[Tile]],
+        with_butterflies: bool = False,
     ) -> None:
         height = len(board)
         width = len(board[0])
@@ -146,17 +162,34 @@ class Board:
         self._simulation_limit = 1_000
         self._with_butterflies = with_butterflies
 
-        # We simulate butterflys above the tiles as what is below
-        # them is important to how they behave
+        # Setting the probability here so we can change it for unit testing
+        self._butterfly_chance = 0.01
+        self._butterfly_mortality = 0.1
+
+        # We simulate butterflys above the tiles as what is below them is
+        # important to how they behave
         self._butterflies = dict()
 
     def __repr__(self) -> str:
+        """
+        We define a repr method here so that comparing board states and
+        displaying them in the terminal is easier. We ant to be able to quickly
+        check if two board states are the same for both tests and finding the
+        stopping point for a steady state
+        """
         rows = []
         for idx, row in enumerate(self.board):
-            str_row = "".join([str(tile) for tile in row])
+            str_row = ""
+            for tile in row:
+                str_repr = str(tile)
 
-            # We need to append a new line delimiter for all
-            # but the last line
+                # Add in butterflies
+                if tile.position in self._butterflies.keys():
+                    str_repr = str(self._butterflies[tile.position])
+
+                str_row = str_row + str_repr
+
+            # New line marker for every line except the last
             if idx != self.height - 1:
                 str_row = str_row + "\n"
 
@@ -166,9 +199,28 @@ class Board:
 
     @property
     def rich_repr(self) -> str:
+        """
+        The purpose of this property is to make calling the enriched text
+        version of the board easy. This is done so that we can print out
+        the board quickly and neatly for a user and be able to see what each
+        value is
+        """
         rows = []
-        for row in self.board:
-            str_row = "".join([tile.rich_repr for tile in row]) + "\n"
+        for idx, row in enumerate(self.board):
+            str_row = ""
+            for tile in row:
+                str_repr = tile.rich_repr
+
+                # Add in butterflies
+                if tile.position in self._butterflies.keys():
+                    str_repr = self._butterflies[tile.position].rich_repr
+
+                str_row = str_row + str_repr
+
+            # New line marker for every line except the last
+            if idx != self.height - 1:
+                str_row = str_row + "\n"
+
             rows.append(str_row)
 
         return "".join(rows)
@@ -196,13 +248,15 @@ class Board:
         return row
 
     @classmethod
-    def from_file(cls, buffer: StringIO) -> Board:
+    def from_file(
+        cls, buffer: StringIO, *, with_butterflies: bool = False
+    ) -> Board:
         board = []
         with buffer as file:
             for idx, row_str in enumerate(file):
                 board.append(cls._initialise_row(row_str, idx))
 
-        return cls(board)
+        return cls(board, with_butterflies)
 
     def get_neighbours(self, x: int, y: int) -> List[Tile]:
         # get the diagonals, we use a set to deduplicate any points for
@@ -240,15 +294,49 @@ class Board:
                 new_board[y][x] = tmp.simulate(self)  # type: ignore
 
         self.board = new_board  # type: ignore
+
+        if self._with_butterflies:
+            self._simulate_butterflies()
+
         self.step_count += 1
 
+    def _create_butterfly(self, x: int, y: int) -> None:
+        if not self._with_butterflies:
+            return
+
+        # This method is slightly imperfect due to rounding but its close
+        # enough that it should not affect the simulation too much
+        probability = int(1 / self._butterfly_chance)
+        if random.randint(1, probability) == probability:
+            self._butterflies[(x, y)] = Butterfly(x, y)
+
     def _simulate_butterflies(self) -> None:
-        # butterfly = (
-        #     Butterfly(self.x, self.y)
-        #     if random.randint(1, 100) == 100
-        #     else Field(self.x, self.y)
-        # )
-        pass
+        # TODO: This method is too coupled, need to address how the board
+        #       interacts with Tiles and specifically butterflies
+        new_butterflies = dict()
+        for position, butterfly in self._butterflies.items():
+            x, y = position
+            # Check for flower and create Caterpiller if true
+            if isinstance(self.board[y][x], Flower):
+                self.board[y][x] = Caterpiller(x, y)
+                continue
+
+            # Check if it dies
+            if 1 >= self._butterfly_mortality > 0:
+                mortality = int(1 / self._butterfly_mortality)
+                if random.randint(1, mortality) == mortality:
+                    continue
+
+            # otherwise move the butterfly
+            available_positions = [
+                tile.position for tile in self.get_neighbours(x, y)
+            ]
+            new_position = available_positions[
+                random.randint(0, len(available_positions) - 1)
+            ]
+            new_butterflies[new_position] = butterfly
+
+        self._butterflies = new_butterflies
 
     def simulate_till_steady(self) -> int:
         loop = True
@@ -272,7 +360,11 @@ app = Typer()
 
 @app.command("simulate_garden")
 def simulate_garden(
-    file_path: str = Argument(None), generations: int = Argument(10)
+    file_path: str = Argument(None),
+    generations: int = Argument(10),
+    butterflies: bool = Option(
+        False, is_flag=True, help="Enable butterflies in the simulation"
+    ),
 ) -> None:
     console = Console()
 
@@ -281,7 +373,7 @@ def simulate_garden(
         raise FileNotFoundError("File does not exist")
 
     buffer = StringIO(path.read_bytes().decode("utf-8"))
-    board = Board.from_file(buffer)
+    board = Board.from_file(buffer, with_butterflies=butterflies)
     console.print(f"Simulating Map over {generations} steps:")
 
     with console.status(
@@ -298,7 +390,12 @@ def simulate_garden(
 
 
 @app.command("simulate_till_steady")
-def simulate_till_steady(file_path: str = Argument(None)) -> None:
+def simulate_till_steady(
+    file_path: str = Argument(None),
+    butterflies: bool = Option(
+        False, is_flag=True, help="Enable butterflies in the simulation"
+    ),
+) -> None:
     console = Console()
 
     console.print("Simulating Steady state:")
@@ -307,7 +404,7 @@ def simulate_till_steady(file_path: str = Argument(None)) -> None:
         raise FileNotFoundError("File does not exist")
 
     buffer = StringIO(path.read_bytes().decode("utf-8"))
-    board = Board.from_file(buffer)
+    board = Board.from_file(buffer, with_butterflies=butterflies)
 
     with console.status(
         "[green]Simulating gardens ...[/green]", spinner="dots"

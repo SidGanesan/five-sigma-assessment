@@ -99,3 +99,16 @@ def test_get_neighbours__edges(
 
     assert len(neighbours) == expected_num
     assert str(board.board[y][x]) == expected_instance
+
+
+def test_spawn_butterflies() -> None:
+    test_str = "   \n ~ \n   "
+    board = Board.from_file(StringIO(test_str), with_butterflies=True)
+    board._butterfly_chance = 1
+    board._butterfly_mortality = 0
+
+    board.simulate()
+    assert "B" in str(board)
+
+    board.simulate()
+    assert "B" in str(board)
