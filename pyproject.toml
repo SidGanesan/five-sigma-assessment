@@ -10,6 +10,8 @@ packages = [{include = "five_sigma"}]
 python = "^3.10"
 rich = "^13.3.3"
 typer = "^0.7.0"
+pandas = "^2.0.0"
+openpyxl = "^3.1.2"
 
 
 [tool.poetry.group.dev.dependencies]
