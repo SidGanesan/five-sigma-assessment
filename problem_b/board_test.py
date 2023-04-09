@@ -2,7 +2,9 @@ from io import StringIO
 from typing import Tuple
 
 import pytest
-from problem_b import Board, Caterpiller, Field, Flower
+from problem_b.board import Board
+from problem_b.tile import Caterpiller, Field, Flower
+from problem_b.utils import get_adjacent_units
 
 
 def test_initialise_map() -> None:
@@ -64,10 +66,10 @@ def test_simulate__center(test_str: str, expected_instance: str) -> None:
 
 
 def test_get_neighbours() -> None:
-    test_str = "   \n   \n   "
+    test_str = "   \n * \n   "
     board = Board.from_file(StringIO(test_str))
 
-    neighbours = board.get_neighbours(1, 1)
+    neighbours = get_adjacent_units(1, 1, board.board)
 
     assert len(neighbours) == 8
     assert all(isinstance(tile, Field) for tile in neighbours)
@@ -95,7 +97,7 @@ def test_get_neighbours__edges(
     board = Board.from_file(StringIO(test_str))
 
     x, y = position
-    neighbours = board.get_neighbours(x, y)
+    neighbours = get_adjacent_units(x, y, board.board)
 
     assert len(neighbours) == expected_num
     assert str(board.board[y][x]) == expected_instance
