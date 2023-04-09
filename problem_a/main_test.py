@@ -1,5 +1,5 @@
 import pytest
-from problem_a import Concert
+from .main import Concert
 
 
 @pytest.mark.parametrize("size", [(5), (10), (15)])
